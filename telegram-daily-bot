@@ -155,5 +155,4 @@ try:
 asyncio.run(main())
 except (KeyboardInterrupt, SystemExit):
 logger.info("Bot stopped")
-
-
+python-telegram-bot==21.4
