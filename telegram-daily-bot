@@ -1,0 +1,159 @@
+"""
+Telegram bot that sends a fixed message to a target group every 24 hours.
+
+
+Message: "ممد فیلمتو پاک کردم😉"
+
+
+Setup (quick):
+
+
+
+
+Create a bot with @BotFather → copy the token.
+
+
+Add the bot to your target group (and make it admin if required).
+
+
+Find the group chat ID (e.g., via @userinfobot after forwarding a message from the group, or by temporarily disabling privacy and using getUpdates).
+
+
+Run this file with environment variables:
+BOT_TOKEN=YOUR_TOKEN TARGET_CHAT_ID=YOUR_CHAT_ID python daily_bot.py
+
+
+
+
+Dependencies:
+pip install python-telegram-bot==21.4
+
+
+Notes:
+
+
+
+
+The bot runs forever and sends the message every 24 hours, first run 24h after startup.
+
+
+Use /sendnow to test immediately.
+"""
+
+
+
+
+import asyncio
+import logging
+import os
+from datetime import datetime
+
+
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
+
+
+==================== CONFIG ====================
+
+
+MESSAGE_TEXT = "ممد فیلمتو پاک کردم😉"
+INTERVAL_SECONDS = 24 * 60 * 60  # 24 hours
+
+
+Optional: set a fixed daily time (HH:MM, 24h). If None, uses pure 24h interval.
+
+
+Example: FIXED_DAILY_TIME = "09:00"
+
+
+FIXED_DAILY_TIME: str | None = None
+TIMEZONE = os.getenv("TZ", "Europe/Berlin")
+
+
+=================================================
+
+
+logging.basicConfig(
+format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+level=logging.INFO,
+)
+logger = logging.getLogger("daily-bot")
+
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("TARGET_CHAT_ID")
+
+
+if not BOT_TOKEN:
+raise SystemExit("Missing BOT_TOKEN environment variable")
+if not CHAT_ID:
+raise SystemExit("Missing TARGET_CHAT_ID environment variable")
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+"""Start command: confirms setup and next run time."""
+next_time = await schedule_info(context)
+await update.message.reply_text(
+f"ربات فعاله. پیام هر ۲۴ ساعت ارسال میشه.\nNext send: {next_time} ({TIMEZONE})\nبرای تست: /sendnow"
+)
+
+
+async def sendnow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+"""Manual trigger to send now."""
+await context.bot.send_message(chat_id=CHAT_ID, text=MESSAGE_TEXT)
+await update.message.reply_text("✅ ارسال شد.")
+
+
+async def daily_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+try:
+await context.bot.send_message(chat_id=CHAT_ID, text=MESSAGE_TEXT)
+logger.info("Message sent to %s", CHAT_ID)
+except Exception as e:
+logger.exception("Failed to send message: %s", e)
+
+
+async def schedule_info(context: ContextTypes.DEFAULT_TYPE) -> str:
+# Try to read next run time of the repeating job
+jobs = context.job_queue.jobs()
+if jobs:
+# first job is our only job
+j = jobs[0]
+if j.next_t:
+return j.next_t.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+return "نامشخص"
+
+
+async def main() -> None:
+application = Application.builder().token(BOT_TOKEN).build()
+
+
+# Commands
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("sendnow", sendnow))
+
+# Scheduling
+jq = application.job_queue
+
+if FIXED_DAILY_TIME:
+    # Schedule at a fixed local time every day
+    hh, mm = map(int, FIXED_DAILY_TIME.split(":"))
+    # Use tz-aware daily trigger
+    jq.run_daily(daily_job, time=datetime.now().astimezone().replace(hour=hh, minute=mm, second=0, microsecond=0).timetz())
+    logger.info("Scheduled daily at %s (%s)", FIXED_DAILY_TIME, TIMEZONE)
+else:
+    # Pure interval: first run after 24h
+    jq.run_repeating(daily_job, interval=INTERVAL_SECONDS, first=INTERVAL_SECONDS, name="daily")
+    logger.info("Scheduled every %s seconds (first run after 24h)", INTERVAL_SECONDS)
+
+logger.info("Bot started. Press Ctrl+C to stop.")
+await application.run_polling(close_loop=False)
+
+
+
+if name == "main":
+try:
+asyncio.run(main())
+except (KeyboardInterrupt, SystemExit):
+logger.info("Bot stopped")
+
+
